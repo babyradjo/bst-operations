@@ -1016,12 +1016,31 @@ function meetingOutput(kind) {
   render();
 }
 
-function quick(x) {
-  if (x.includes('Bukti')) openEvidence();
-  else if (x.includes('Ide')) openIdea();
-  else if (x.includes('Rapat')) openMeeting();
-  else if (x.includes('Hambatan')) openEscalation();
-  else openTask();
+// Expose functions globally for mobile browser inline event handlers
+if (typeof window !== 'undefined') {
+  Object.assign(window, {
+    go,
+    quick,
+    render,
+    openTask,
+    openEvidence,
+    openIdea,
+    openMeeting,
+    openEscalation,
+    completeTask,
+    verifyEvidence,
+    ideaToTask,
+    confirmCandidate,
+    founderAction,
+    switchUser,
+    switchUserModal,
+    openGoogleStatus,
+    activateGoogleToken,
+    disconnectGoogle,
+    testGoogleConnection,
+    manualSyncFromGoogle,
+    meetingOutput
+  });
 }
 
 // Background auto-sync every 15 seconds if Google is connected
@@ -1034,5 +1053,6 @@ if (typeof window !== 'undefined') {
 }
 
 render();
+
 
 
