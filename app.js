@@ -1,4 +1,4 @@
-/* BST Operations — Multi-User Operations & Google Adapter Boundary */
+/* BST Operations — Multi-User Operations & Google Live Sync */
 const SPREADSHEET_ID = '11CTN2RdpNsyngd9kwaI1DNwl82Q6G98363PdJQnrGkA';
 const DRIVE_ROOT_ID = '1A9a0f_EYix06BC8a12CILxsgCdsshCFK';
 
@@ -99,11 +99,26 @@ const initial = {
   ]
 };
 
+// Check for token in URL query or hash on startup
+if (typeof window !== 'undefined') {
+  const urlParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.substring(1) : window.location.hash);
+  const urlToken = urlParams.get('access_token') || hashParams.get('access_token') || urlParams.get('token');
+  if (urlToken) {
+    localStorage.setItem('bst_google_access_token', urlToken);
+    if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.googleAdapter) {
+      window.BSTGoogleAdapter.googleAdapter.setCredentials({ accessToken: urlToken });
+    }
+  }
+}
+
 let state = JSON.parse(localStorage.getItem('bst-v1') || 'null') || initial;
 if (!state.activeUser) state.activeUser = 'Mukti & Jey Altahar';
 if (!state.escalations) state.escalations = initial.escalations;
 
 let view = 'Beranda';
+let syncInProgress = false;
+
 const save = () => {
   localStorage.setItem('bst-v1', JSON.stringify(state));
 };
@@ -114,6 +129,13 @@ const esc = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 function getCurrentUser() {
   return TEAM.find(t => t[0] === state.activeUser) || TEAM[7];
+}
+
+function isGoogleLive() {
+  return typeof window !== 'undefined' && 
+         window.BSTGoogleAdapter && 
+         window.BSTGoogleAdapter.googleAdapter && 
+         window.BSTGoogleAdapter.googleAdapter.mode === 'GOOGLE_CONNECTED';
 }
 
 function badge(s) {
@@ -137,6 +159,7 @@ function taskCard(t) {
   const comp = getCompleteness(t);
   const waiting = comp.waitingOn.length ? comp.waitingOn.join(', ') : 'Tidak ada';
   const isCandidate = t.candidate || t.status === 'PENDING VERIFICATION';
+  const isLive = isGoogleLive();
   
   return `
     <article class="card task">
@@ -146,7 +169,7 @@ function taskCard(t) {
           <h3>${esc(t.title)}</h3>
         </div>
         <div>
-          ${badge(t.demo ? 'DEMO' : t.status)}
+          ${badge(isLive && !t.demo ? 'CANONICAL' : t.demo ? 'DEMO' : t.status)}
           ${isCandidate ? badge('KANDIDAT AI / RAPAT') : ''}
         </div>
       </div>
@@ -166,9 +189,9 @@ function taskCard(t) {
 
 function layout(content) {
   const u = getCurrentUser();
-  const isGoogleConnected = window.BSTGoogleAdapter && window.BSTGoogleAdapter.googleAdapter.mode === 'GOOGLE_CONNECTED';
-  const stateLabel = isGoogleConnected ? 'MODE GOOGLE · TERHUBUNG (CANONICAL)' : 'MODE DEMO · GOOGLE BELUM TERHUBUNG';
-  const stateClass = isGoogleConnected ? 'state connected' : 'state';
+  const isLive = isGoogleLive();
+  const stateLabel = isLive ? 'MODE GOOGLE · LIVE SYNC (CANONICAL)' : 'GOOGLE BELUM TERHUBUNG · KLIK UNTUK OTORISASI';
+  const stateClass = isLive ? 'state connected' : 'state';
 
   document.querySelector('#app').innerHTML = `
     <header>
@@ -176,7 +199,10 @@ function layout(content) {
         <i>BST</i>
         <span>Operations<br><small>Merawat kerja bersama</small></span>
       </div>
-      <div class="${stateClass}" onclick="openGoogleStatus()" title="Lihat Status Google Control Center">${stateLabel}</div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button onclick="manualSyncFromGoogle()" style="font-size: 11px; padding: 6px 9px;" title="Sinkronisasi data Google terbaru">🔄 Sync</button>
+        <div class="${stateClass}" onclick="openGoogleStatus()" title="Pengaturan Integrasi Google Sheets & Drive">${stateLabel}</div>
+      </div>
     </header>
     <main>
       <aside>
@@ -197,6 +223,7 @@ function layout(content) {
 
 function home() {
   const u = getCurrentUser();
+  const isLive = isGoogleLive();
   const mine = state.tasks.filter(t => t.owner === u[0] || (u[0].includes('Mukti') && (t.owner || '').includes('Mukti')));
   const waitingMine = state.tasks.filter(t => (t.contributors || []).some(c => (u[1].includes(c[0]) || (u[0].includes('Mukti') && (c[0] === 'Sekretariat' || c[0] === 'Keuangan'))) && c[1] === 'Belum Mulai'));
   const unverifiedEvidence = state.evidence.filter(x => x.status !== 'VERIFIED').length;
@@ -206,7 +233,7 @@ function home() {
     <div class="hero">
       <p class="eyebrow">BERANDA · PERSONAL HOME (${esc(u[0].toUpperCase())})</p>
       <h1>Kerja bersama, bukti yang bertumbuh.</h1>
-      <p>Masuk sebagai <b>${esc(u[0])}</b> (${esc(u[1])}). Semua data operasional tersinkronisasi aman dengan fallback lokal.</p>
+      <p>Masuk sebagai <b>${esc(u[0])}</b> (${esc(u[1])}). ${isLive ? '<span style="color: #245030; font-weight: bold;">Tersambung langsung ke Google Sheet & Drive BST secara multi-perangkat.</span>' : 'Hubungkan akun Google BST untuk live sync multi-perangkat bersama Oeblet.'}</p>
       <div class="actions">
         ${['+ Tambah Update', '+ Upload Bukti', '+ Catat Ide', '+ Minta Bantuan', '+ Tandai Hambatan', '+ Mulai Diskusi', '+ Rapat'].map(x => `<button onclick="quick('${x}')">${x}</button>`).join('')}
       </div>
@@ -239,6 +266,7 @@ function tasks() {
 }
 
 function evidence() {
+  const isLive = isGoogleLive();
   return `
     <div class="title">
       <div>
@@ -247,7 +275,7 @@ function evidence() {
       </div>
       <button class="primary" onclick="openEvidence()">+ Catat bukti</button>
     </div>
-    <div class="notice">Satu bukti dapat dipakai untuk beberapa grant. Folder Drive Root: <code>1A9a0f_EYix06BC8a12CILxsgCdsshCFK</code></div>
+    <div class="notice">Satu bukti dapat dipakai untuk beberapa grant. Folder Drive Root: <code>${DRIVE_ROOT_ID}</code></div>
     ${state.evidence.map(e => `
       <article class="card">
         <div class="row">
@@ -258,7 +286,7 @@ function evidence() {
           </div>
           <div>
             ${badge(e.status)}
-            ${badge(e.demo ? 'DEMO' : 'CANONICAL')}
+            ${badge(isLive && !e.demo ? 'CANONICAL' : e.demo ? 'DEMO' : 'CANONICAL')}
             ${e.candidate ? badge('KANDIDAT AI / RAPAT') : ''}
           </div>
         </div>
@@ -272,6 +300,7 @@ function evidence() {
 }
 
 function ideas() {
+  const isLive = isGoogleLive();
   return `
     <div class="title">
       <div>
@@ -291,7 +320,7 @@ function ideas() {
           </div>
           <div>
             ${badge(i.stage)}
-            ${badge(i.demo ? 'DEMO' : 'CANONICAL')}
+            ${badge(isLive && !i.demo ? 'CANONICAL' : i.demo ? 'DEMO' : 'CANONICAL')}
           </div>
         </div>
         <div class="actions">
@@ -304,6 +333,7 @@ function ideas() {
 }
 
 function meetings() {
+  const isLive = isGoogleLive();
   return `
     <div class="title">
       <div>
@@ -322,7 +352,7 @@ function meetings() {
           </div>
           <div>
             ${badge(m.status)}
-            ${badge(m.demo ? 'DEMO' : 'CANONICAL')}
+            ${badge(isLive && !m.demo ? 'CANONICAL' : m.demo ? 'DEMO' : 'CANONICAL')}
           </div>
         </div>
         <div class="actions">
@@ -361,7 +391,7 @@ function team() {
 }
 
 function founder() {
-  const u = getCurrentUser();
+  const isLive = isGoogleLive();
   const unverified = state.evidence.filter(x => x.status !== 'VERIFIED').length;
   const readiness = Math.round((state.evidence.filter(x => x.status === 'VERIFIED').length / Math.max(state.evidence.length, 1)) * 100);
   const activeEscalations = (state.escalations || []).filter(e => e.status === 'ESCALATED');
@@ -395,7 +425,7 @@ function founder() {
           </div>
           <div>
             ${badge(e.status)}
-            ${badge(e.demo ? 'DEMO' : 'CANONICAL')}
+            ${badge(isLive && !e.demo ? 'CANONICAL' : e.demo ? 'DEMO' : 'CANONICAL')}
           </div>
         </div>
         ${e.status === 'ESCALATED' ? `
@@ -429,6 +459,7 @@ function grants() {
 }
 
 function generic() {
+  const isLive = isGoogleLive();
   const map = {
     Program: ['Program', 'Belum ada program terverifikasi.', 'Program baru harus diberi status PROPOSED atau PENDING VERIFICATION.'],
     Kalender: ['Kalender', 'Google Calendar belum terhubung.', 'Deadline dan rapat dapat dicatat secara lokal saat ini.'],
@@ -452,7 +483,7 @@ function generic() {
           </div>
           <div>
             ${badge(d.status)}
-            ${badge(d.demo ? 'DEMO' : 'CANONICAL')}
+            ${badge(isLive && !d.demo ? 'CANONICAL' : d.demo ? 'DEMO' : 'CANONICAL')}
             ${d.candidate ? badge('KANDIDAT AI') : ''}
           </div>
         </div>
@@ -514,24 +545,121 @@ function switchUserModal() {
 }
 
 function openGoogleStatus() {
-  const isGoogleConnected = window.BSTGoogleAdapter && window.BSTGoogleAdapter.googleAdapter.mode === 'GOOGLE_CONNECTED';
+  const isLive = isGoogleLive();
+  const currentToken = typeof localStorage !== 'undefined' ? (localStorage.getItem('bst_google_access_token') || '') : '';
+  
   document.querySelector('#modal').innerHTML = `
     <div class="overlay">
       <div class="modal">
         <button type="button" class="close" onclick="document.querySelector('#modal').innerHTML=''">×</button>
-        <h2>Status Integrasi Google</h2>
+        <h2>Integrasi Google Control Center</h2>
         <div class="notice" style="margin-top: 12px;">
           <b>Control Center Spreadsheet:</b><br>
           <code>${SPREADSHEET_ID}</code><br><br>
           <b>Drive Root Folder:</b><br>
           <code>${DRIVE_ROOT_ID}</code>
         </div>
-        <p><b>Status Saat Ini:</b> ${isGoogleConnected ? '<span style="color: #245030; font-weight: bold;">TERHUBUNG (CANONICAL)</span>' : '<span style="color: #7a5813; font-weight: bold;">LOCAL DEMO FALLBACK (AMAN)</span>'}</p>
-        <p class="muted">Kredensial Google disimpan di luar repositori (server environment variables). Jika belum terkonfigurasi, sistem beroperasi dalam Local Demo Fallback mode secara transparan tanpa kehilangan data.</p>
-        <button class="primary" style="width: 100%; margin-top: 10px;" onclick="document.querySelector('#modal').innerHTML=''">Tutup</button>
+        <p><b>Status Saat Ini:</b> ${isLive ? '<span style="color: #245030; font-weight: bold;">✓ TERHUBUNG LIVE SYNC (CANONICAL)</span>' : '<span style="color: #7a5813; font-weight: bold;">⚠ MEMERLUKAN OTORISASI GOOGLE</span>'}</p>
+        
+        <div style="margin: 16px 0; display: grid; gap: 10px;">
+          <label style="display: block; font-weight: bold; font-size: 12px;">
+            Google OAuth Access Token:
+            <input id="google_token_input" type="password" value="${esc(currentToken)}" placeholder="Tempel Google Bearer Token di sini..." style="margin-top: 5px;">
+          </label>
+          <div style="display: flex; gap: 8px;">
+            <button class="primary" onclick="activateGoogleToken()" style="flex: 1;">Aktifkan Live Sync</button>
+            ${isLive ? '<button onclick="disconnectGoogle()" style="color: #8a2424;">Putuskan</button>' : ''}
+          </div>
+          <button onclick="testGoogleConnection()" style="width: 100%;">⚡ Uji Koneksi Sheet & Drive Sekarang</button>
+          <div id="google_test_output" style="font-size: 12px; margin-top: 6px;"></div>
+        </div>
+
+        <button style="width: 100%; margin-top: 8px;" onclick="document.querySelector('#modal').innerHTML=''">Tutup</button>
       </div>
     </div>
   `;
+}
+
+function activateGoogleToken() {
+  const token = document.querySelector('#google_token_input')?.value?.trim();
+  if (!token) {
+    alert('Masukkan Google Access Token yang valid.');
+    return;
+  }
+  if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.googleAdapter) {
+    window.BSTGoogleAdapter.googleAdapter.setCredentials({ accessToken: token });
+  }
+  manualSyncFromGoogle();
+  render();
+  openGoogleStatus();
+}
+
+function disconnectGoogle() {
+  if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.googleAdapter) {
+    window.BSTGoogleAdapter.googleAdapter.clearCredentials();
+  }
+  render();
+  openGoogleStatus();
+}
+
+async function testGoogleConnection() {
+  const out = document.querySelector('#google_test_output');
+  if (!out) return;
+  out.innerHTML = '<span style="color: #555;">Menguji koneksi ke Google API...</span>';
+
+  if (!isGoogleLive()) {
+    out.innerHTML = '<span style="color: #8a2424; font-weight: bold;">✕ Gagal: Token belum dimasukkan atau belum aktif.</span>';
+    return;
+  }
+
+  try {
+    const adapter = window.BSTGoogleAdapter.googleAdapter;
+    const taskRows = await adapter.readModule('tasks');
+    const driveCheck = await adapter.checkDriveAccess();
+    out.innerHTML = `<span style="color: #245030; font-weight: bold;">✓ SUKSES! Sheet TASKS terbaca (${taskRows.length} baris), Drive root folder "${esc(driveCheck.name)}" terverifikasi.</span>`;
+  } catch (err) {
+    out.innerHTML = `<span style="color: #8a2424; font-weight: bold;">✕ Gagal: ${esc(err.message)}</span>`;
+  }
+}
+
+async function manualSyncFromGoogle() {
+  if (!isGoogleLive() || syncInProgress) return;
+  syncInProgress = true;
+  try {
+    const adapter = window.BSTGoogleAdapter.googleAdapter;
+    const [tasks, ideas, evidence, decisions, meetings, escalations] = await Promise.all([
+      adapter.readModule('tasks').catch(() => null),
+      adapter.readModule('ideas').catch(() => null),
+      adapter.readModule('evidence').catch(() => null),
+      adapter.readModule('decisions').catch(() => null),
+      adapter.readModule('meetings').catch(() => null),
+      adapter.readModule('escalations').catch(() => null)
+    ]);
+
+    if (tasks && tasks.length > 0) state.tasks = tasks;
+    if (ideas && ideas.length > 0) state.ideas = ideas;
+    if (evidence && evidence.length > 0) state.evidence = evidence;
+    if (decisions && decisions.length > 0) state.decisions = decisions;
+    if (meetings && meetings.length > 0) state.meetings = meetings;
+    if (escalations && escalations.length > 0) state.escalations = escalations;
+
+    save();
+    render();
+  } catch (e) {
+    console.warn('Google Sync Warning:', e);
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+async function syncRecordToGoogle(moduleName, record) {
+  if (!isGoogleLive()) return;
+  try {
+    const adapter = window.BSTGoogleAdapter.googleAdapter;
+    await adapter.writeRecord(moduleName, record);
+  } catch (err) {
+    console.error(`Gagal menulis ke Google Sheet [${moduleName}]:`, err);
+  }
 }
 
 function completeTask(id) {
@@ -552,6 +680,7 @@ function completeTask(id) {
   }
 
   save();
+  syncRecordToGoogle('tasks', t);
   render();
 }
 
@@ -570,6 +699,7 @@ function verifyEvidence(id) {
   }
 
   save();
+  syncRecordToGoogle('evidence', e);
   render();
 }
 
@@ -578,12 +708,14 @@ function ideaToTask(id) {
   if (!i) return;
 
   const u = getCurrentUser();
+  let newTask = null;
   if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.convertIdeaToProposedTask) {
     const { task, updatedIdea } = window.BSTGoogleAdapter.convertIdeaToProposedTask(i, u[0]);
     Object.assign(i, updatedIdea);
+    newTask = task;
     state.tasks.push(task);
   } else {
-    state.tasks.push({
+    newTask = {
       id: Date.now(),
       title: i.text,
       program: 'Program belum ditetapkan',
@@ -591,19 +723,22 @@ function ideaToTask(id) {
       due: 'Belum dijadwalkan',
       status: 'PROPOSED',
       contributors: [[i.category || 'Kontributor', 'Belum Mulai']],
-      demo: true,
+      demo: !isGoogleLive(),
       provenance: { origin_idea_id: i.id, converted_by: u[0], created_at: new Date().toISOString() }
-    });
+    };
+    state.tasks.push(newTask);
     i.stage = 'LAYAK DICOBA';
   }
 
   save();
+  syncRecordToGoogle('tasks', newTask);
   view = 'Tugas';
   render();
 }
 
 function confirmCandidate(kind, id) {
   const u = getCurrentUser();
+  let confirmedItem = null;
   if (kind === 'task') {
     let t = state.tasks.find(x => x.id === id);
     if (t) {
@@ -614,6 +749,7 @@ function confirmCandidate(kind, id) {
         t.status = 'PROPOSED';
         t.confirmed_by = u[0];
       }
+      confirmedItem = t;
     }
   } else if (kind === 'decision') {
     let d = state.decisions.find(x => x.id === id);
@@ -625,6 +761,7 @@ function confirmCandidate(kind, id) {
         d.status = 'VERIFIED';
         d.confirmed_by = u[0];
       }
+      confirmedItem = d;
     }
   } else if (kind === 'idea') {
     let i = state.ideas.find(x => x.id === id);
@@ -635,6 +772,7 @@ function confirmCandidate(kind, id) {
         i.candidate = false;
         i.confirmed_by = u[0];
       }
+      confirmedItem = i;
     }
   } else if (kind === 'evidence') {
     let e = state.evidence.find(x => x.id === id);
@@ -646,9 +784,13 @@ function confirmCandidate(kind, id) {
         e.status = 'VERIFIED';
         e.confirmed_by = u[0];
       }
+      confirmedItem = e;
     }
   }
   save();
+  if (confirmedItem) {
+    syncRecordToGoogle(kind === 'task' ? 'tasks' : kind === 'decision' ? 'decisions' : kind === 'idea' ? 'ideas' : 'evidence', confirmedItem);
+  }
   render();
 }
 
@@ -669,6 +811,7 @@ function founderAction(escalationId, action) {
   }
 
   save();
+  syncRecordToGoogle('escalations', e);
   render();
 }
 
@@ -688,7 +831,7 @@ function modal(title, fields, cb) {
 function openTask() {
   const u = getCurrentUser();
   modal('Tugas baru', ['Judul', 'Petugas'], f => {
-    state.tasks.push({
+    const newTask = {
       id: Date.now(),
       title: f.Judul.value,
       program: 'Program belum ditetapkan',
@@ -696,10 +839,12 @@ function openTask() {
       due: 'Belum dijadwalkan',
       status: 'PROPOSED',
       contributors: [['Kontributor', 'Belum Mulai']],
-      demo: true,
+      demo: !isGoogleLive(),
       provenance: { created_by: u[0], created_at: new Date().toISOString() }
-    });
+    };
+    state.tasks.push(newTask);
     save();
+    syncRecordToGoogle('tasks', newTask);
     document.querySelector('#modal').innerHTML = '';
     render();
   });
@@ -708,16 +853,18 @@ function openTask() {
 function openEvidence() {
   const u = getCurrentUser();
   modal('Catat bukti', ['Judul', 'Jenis bukti'], f => {
-    state.evidence.push({
+    const newEvidence = {
       id: Date.now(),
       title: f.Judul.value,
       type: f['Jenis bukti'].value,
       status: 'SUBMITTED',
       by: u[0],
-      demo: true,
+      demo: !isGoogleLive(),
       provenance: { created_by: u[0], created_at: new Date().toISOString() }
-    });
+    };
+    state.evidence.push(newEvidence);
     save();
+    syncRecordToGoogle('evidence', newEvidence);
     document.querySelector('#modal').innerHTML = '';
     render();
   });
@@ -726,16 +873,18 @@ function openEvidence() {
 function openIdea() {
   const u = getCurrentUser();
   modal('Tanam ide', ['Ide', 'Kategori'], f => {
-    state.ideas.push({
+    const newIdea = {
       id: Date.now(),
       text: f.Ide.value,
       category: f.Kategori.value,
       by: u[0],
       stage: 'BENIH',
-      demo: true,
+      demo: !isGoogleLive(),
       provenance: { created_by: u[0], created_at: new Date().toISOString() }
-    });
+    };
+    state.ideas.push(newIdea);
     save();
+    syncRecordToGoogle('ideas', newIdea);
     document.querySelector('#modal').innerHTML = '';
     render();
   });
@@ -743,14 +892,16 @@ function openIdea() {
 
 function openMeeting() {
   modal('Rapat baru', ['Judul rapat', 'Waktu'], f => {
-    state.meetings.push({
+    const newMeeting = {
       id: Date.now(),
       title: f['Judul rapat'].value,
       when: f.Waktu.value,
       status: 'SIAP DIHUBUNGKAN',
-      demo: true
-    });
+      demo: !isGoogleLive()
+    };
+    state.meetings.push(newMeeting);
     save();
+    syncRecordToGoogle('meetings', newMeeting);
     document.querySelector('#modal').innerHTML = '';
     render();
   });
@@ -759,18 +910,19 @@ function openMeeting() {
 function openEscalation() {
   const u = getCurrentUser();
   modal('Eskalasi ke Founder', ['Judul eskalasi', 'Deskripsi masalah / otorisasi'], f => {
+    let escRecord = null;
     if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.escalateToFounder) {
-      const escRecord = window.BSTGoogleAdapter.escalateToFounder(
+      escRecord = window.BSTGoogleAdapter.escalateToFounder(
         f['Judul eskalasi'].value,
         f['Deskripsi masalah / otorisasi'].value,
         u[0],
         'TINGGI'
       );
+      escRecord.demo = !isGoogleLive();
       state.escalations = state.escalations || [];
       state.escalations.push(escRecord);
     } else {
-      state.escalations = state.escalations || [];
-      state.escalations.push({
+      escRecord = {
         id: Date.now(),
         title: f['Judul eskalasi'].value,
         description: f['Deskripsi masalah / otorisasi'].value,
@@ -779,11 +931,14 @@ function openEscalation() {
         status: 'ESCALATED',
         founder_action: null,
         founder_notes: null,
-        demo: true,
+        demo: !isGoogleLive(),
         created_at: new Date().toISOString()
-      });
+      };
+      state.escalations = state.escalations || [];
+      state.escalations.push(escRecord);
     }
     save();
+    syncRecordToGoogle('escalations', escRecord);
     document.querySelector('#modal').innerHTML = '';
     view = 'Founder Cockpit';
     render();
@@ -793,54 +948,71 @@ function openEscalation() {
 function meetingOutput(kind) {
   const u = getCurrentUser();
   const meeting = state.meetings[0] || { id: 1, title: 'Rapat Operasi' };
+  let candidate = null;
 
   if (window.BSTGoogleAdapter && window.BSTGoogleAdapter.createMeetingCandidate) {
-    const candidate = window.BSTGoogleAdapter.createMeetingCandidate(meeting, kind, {}, u[0]);
+    candidate = window.BSTGoogleAdapter.createMeetingCandidate(meeting, kind, {}, u[0]);
+    candidate.demo = !isGoogleLive();
     if (kind === 'task') state.tasks.push(candidate);
     if (kind === 'decision') state.decisions.push(candidate);
     if (kind === 'idea') state.ideas.push(candidate);
     if (kind === 'evidence') state.evidence.push(candidate);
   } else {
-    if (kind === 'task') state.tasks.push({
-      id: Date.now(),
-      title: 'Action item dari rapat (kandidat)',
-      program: 'Belum ditetapkan',
-      owner: 'Belum ditugaskan',
-      due: 'Belum dijadwalkan',
-      status: 'PENDING VERIFICATION',
-      candidate: true,
-      contributors: [['Rapat', 'Sudah Diisi']],
-      demo: true
-    });
-    if (kind === 'decision') state.decisions.push({
-      id: Date.now(),
-      text: 'Keputusan kandidat dari rapat',
-      status: 'PENDING VERIFICATION',
-      by: 'Rapat',
-      candidate: true,
-      demo: true
-    });
-    if (kind === 'idea') state.ideas.push({
-      id: Date.now(),
-      text: 'Ide kandidat dari rapat',
-      by: 'Rapat',
-      stage: 'BENIH',
-      category: 'Ide Baru',
-      candidate: true,
-      demo: true
-    });
-    if (kind === 'evidence') state.evidence.push({
-      id: Date.now(),
-      title: 'Bukti kandidat dari rapat',
-      type: 'Catatan rapat',
-      status: 'SUBMITTED',
-      by: 'Rapat',
-      candidate: true,
-      demo: true
-    });
+    if (kind === 'task') {
+      candidate = {
+        id: Date.now(),
+        title: 'Action item dari rapat (kandidat)',
+        program: 'Belum ditetapkan',
+        owner: 'Belum ditugaskan',
+        due: 'Belum dijadwalkan',
+        status: 'PENDING VERIFICATION',
+        candidate: true,
+        contributors: [['Rapat', 'Sudah Diisi']],
+        demo: !isGoogleLive()
+      };
+      state.tasks.push(candidate);
+    }
+    if (kind === 'decision') {
+      candidate = {
+        id: Date.now(),
+        text: 'Keputusan kandidat dari rapat',
+        status: 'PENDING VERIFICATION',
+        by: 'Rapat',
+        candidate: true,
+        demo: !isGoogleLive()
+      };
+      state.decisions.push(candidate);
+    }
+    if (kind === 'idea') {
+      candidate = {
+        id: Date.now(),
+        text: 'Ide kandidat dari rapat',
+        by: 'Rapat',
+        stage: 'BENIH',
+        category: 'Ide Baru',
+        candidate: true,
+        demo: !isGoogleLive()
+      };
+      state.ideas.push(candidate);
+    }
+    if (kind === 'evidence') {
+      candidate = {
+        id: Date.now(),
+        title: 'Bukti kandidat dari rapat',
+        type: 'Catatan rapat',
+        status: 'SUBMITTED',
+        by: 'Rapat',
+        candidate: true,
+        demo: !isGoogleLive()
+      };
+      state.evidence.push(candidate);
+    }
   }
 
   save();
+  if (candidate) {
+    syncRecordToGoogle(kind === 'task' ? 'tasks' : kind === 'decision' ? 'decisions' : kind === 'idea' ? 'ideas' : 'evidence', candidate);
+  }
   render();
 }
 
@@ -852,5 +1024,15 @@ function quick(x) {
   else openTask();
 }
 
+// Background auto-sync every 15 seconds if Google is connected
+if (typeof window !== 'undefined') {
+  setInterval(() => {
+    if (isGoogleLive()) {
+      manualSyncFromGoogle();
+    }
+  }, 15000);
+}
+
 render();
+
 

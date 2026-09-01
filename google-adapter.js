@@ -39,9 +39,166 @@ export const CANONICAL_STATES = {
 };
 
 /**
+ * Serializes a domain object into a Google Sheet row array.
+ */
+export function serializeRecord(moduleName, record) {
+  if (!record) return [];
+  switch (moduleName) {
+    case 'tasks':
+      return [
+        record.id || Date.now(),
+        record.title || '',
+        record.program || '',
+        record.owner || '',
+        record.due || '',
+        record.status || '',
+        JSON.stringify(record.contributors || []),
+        record.demo ? 'TRUE' : 'FALSE',
+        JSON.stringify(record.provenance || {})
+      ];
+    case 'ideas':
+      return [
+        record.id || Date.now(),
+        record.text || '',
+        record.category || '',
+        record.by || '',
+        record.stage || '',
+        record.promoted_by || '',
+        record.created_at || new Date().toISOString()
+      ];
+    case 'evidence':
+      return [
+        record.id || Date.now(),
+        record.title || '',
+        record.type || '',
+        record.status || '',
+        record.by || '',
+        record.verified_by || '',
+        record.verified_at || '',
+        JSON.stringify(record.provenance || {})
+      ];
+    case 'decisions':
+      return [
+        record.id || Date.now(),
+        record.text || '',
+        record.status || '',
+        record.by || '',
+        record.confirmed_by || '',
+        record.created_at || new Date().toISOString()
+      ];
+    case 'meetings':
+      return [
+        record.id || Date.now(),
+        record.title || '',
+        record.when || '',
+        record.status || '',
+        record.candidate ? 'TRUE' : 'FALSE',
+        record.created_at || new Date().toISOString()
+      ];
+    case 'escalations':
+      return [
+        record.id || Date.now(),
+        record.title || '',
+        record.description || '',
+        record.raised_by || '',
+        record.priority || '',
+        record.status || '',
+        record.founder_action || '',
+        record.founder_notes || '',
+        record.resolved_by || '',
+        record.resolved_at || ''
+      ];
+    default:
+      return Array.isArray(record) ? record : Object.values(record);
+  }
+}
+
+/**
+ * Deserializes a Google Sheet row array into a structured domain object.
+ */
+export function deserializeRecord(moduleName, row) {
+  if (!row || !Array.isArray(row) || row.length === 0) return null;
+  switch (moduleName) {
+    case 'tasks': {
+      let contributors = [];
+      let provenance = {};
+      try { contributors = JSON.parse(row[6] || '[]'); } catch { contributors = []; }
+      try { provenance = JSON.parse(row[8] || '{}'); } catch { provenance = {}; }
+      return {
+        id: Number(row[0]) || row[0],
+        title: row[1] || '',
+        program: row[2] || '',
+        owner: row[3] || '',
+        due: row[4] || '',
+        status: row[5] || '',
+        contributors,
+        demo: row[7] === 'TRUE',
+        provenance
+      };
+    }
+    case 'ideas':
+      return {
+        id: Number(row[0]) || row[0],
+        text: row[1] || '',
+        category: row[2] || '',
+        by: row[3] || '',
+        stage: row[4] || '',
+        promoted_by: row[5] || null,
+        created_at: row[6] || ''
+      };
+    case 'evidence': {
+      let provenance = {};
+      try { provenance = JSON.parse(row[7] || '{}'); } catch { provenance = {}; }
+      return {
+        id: Number(row[0]) || row[0],
+        title: row[1] || '',
+        type: row[2] || '',
+        status: row[3] || '',
+        by: row[4] || '',
+        verified_by: row[5] || null,
+        verified_at: row[6] || null,
+        provenance
+      };
+    }
+    case 'decisions':
+      return {
+        id: Number(row[0]) || row[0],
+        text: row[1] || '',
+        status: row[2] || '',
+        by: row[3] || '',
+        confirmed_by: row[4] || null,
+        created_at: row[5] || ''
+      };
+    case 'meetings':
+      return {
+        id: Number(row[0]) || row[0],
+        title: row[1] || '',
+        when: row[2] || '',
+        status: row[3] || '',
+        candidate: row[4] === 'TRUE',
+        created_at: row[5] || ''
+      };
+    case 'escalations':
+      return {
+        id: Number(row[0]) || row[0],
+        title: row[1] || '',
+        description: row[2] || '',
+        raised_by: row[3] || '',
+        priority: row[4] || '',
+        status: row[5] || '',
+        founder_action: row[6] || null,
+        founder_notes: row[7] || null,
+        resolved_by: row[8] || null,
+        resolved_at: row[9] || null
+      };
+
+    default:
+      return row;
+  }
+}
+
+/**
  * Calculates contributor completeness and updates task status.
- * @param {Object} task 
- * @returns {Object} completeness metrics
  */
 export function calculateTaskCompleteness(task) {
   if (!task || !Array.isArray(task.contributors) || task.contributors.length === 0) {
@@ -88,9 +245,6 @@ export function calculateTaskCompleteness(task) {
 
 /**
  * Converts an Idea to a Proposed Task preserving attribution and provenance.
- * @param {Object} idea 
- * @param {string} actor 
- * @returns {{ task: Object, updatedIdea: Object }}
  */
 export function convertIdeaToProposedTask(idea, actor = 'System') {
   if (!idea) throw new Error('Idea is required');
@@ -124,11 +278,6 @@ export function convertIdeaToProposedTask(idea, actor = 'System') {
 
 /**
  * Creates candidate items from a meeting requiring human confirmation.
- * @param {Object} meeting 
- * @param {'task'|'decision'|'idea'|'evidence'} kind 
- * @param {Object} data 
- * @param {string} author 
- * @returns {Object} Candidate record
  */
 export function createMeetingCandidate(meeting, kind, data = {}, author = 'Rapat') {
   const timestamp = new Date().toISOString();
@@ -193,9 +342,6 @@ export function createMeetingCandidate(meeting, kind, data = {}, author = 'Rapat
 
 /**
  * Human-confirmation boundary: confirms a candidate item into active/verified operations.
- * @param {Object} candidate 
- * @param {string} confirmedBy 
- * @returns {Object} Confirmed record
  */
 export function confirmMeetingCandidate(candidate, confirmedBy) {
   if (!candidate) throw new Error('Candidate item is required');
@@ -218,11 +364,6 @@ export function confirmMeetingCandidate(candidate, confirmedBy) {
 
 /**
  * Creates an escalation for Founder Yusup Oeblet.
- * @param {string} title 
- * @param {string} description 
- * @param {string} raisedBy 
- * @param {string} priority 
- * @returns {Object} Escalation record
  */
 export function escalateToFounder(title, description, raisedBy, priority = 'NORMAL') {
   return {
@@ -241,12 +382,6 @@ export function escalateToFounder(title, description, raisedBy, priority = 'NORM
 
 /**
  * Applies a Founder action to an escalation.
- * Allowed actions: 'LIHAT', 'SETUJUI', 'REVISI', 'TAHAN', 'BERI ARAHAN'
- * @param {Object} escalation 
- * @param {'LIHAT'|'SETUJUI'|'REVISI'|'TAHAN'|'BERI ARAHAN'} action 
- * @param {string} notes 
- * @param {string} founderName 
- * @returns {Object} Updated escalation record
  */
 export function resolveFounderEscalation(escalation, action, notes = '', founderName = 'Yusup Oeblet') {
   const validActions = ['LIHAT', 'SETUJUI', 'REVISI', 'TAHAN', 'BERI ARAHAN'];
@@ -266,9 +401,6 @@ export function resolveFounderEscalation(escalation, action, notes = '', founder
 
 /**
  * Verifies an evidence record with full audit provenance.
- * @param {Object} evidence 
- * @param {string} verifiedBy 
- * @returns {Object} Verified evidence record
  */
 export function verifyEvidenceRecord(evidence, verifiedBy = 'BST Operator') {
   if (!evidence) throw new Error('Evidence record is required');
@@ -290,7 +422,7 @@ export function verifyEvidenceRecord(evidence, verifiedBy = 'BST Operator') {
  */
 export function createGoogleAdapter(options = {}) {
   let credentials = {
-    accessToken: options.accessToken || null,
+    accessToken: options.accessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('bst_google_access_token') : null) || null,
     serviceAccount: options.serviceAccount || null,
     apiKey: options.apiKey || null
   };
@@ -308,9 +440,20 @@ export function createGoogleAdapter(options = {}) {
 
     setCredentials(newCreds) {
       credentials = { ...credentials, ...newCreds };
+      if (newCreds.accessToken && typeof localStorage !== 'undefined') {
+        localStorage.setItem('bst_google_access_token', newCreds.accessToken);
+      }
       connectionMode = credentials.accessToken || credentials.serviceAccount 
         ? 'GOOGLE_CONNECTED' 
         : 'GOOGLE_NOT_CONNECTED';
+    },
+
+    clearCredentials() {
+      credentials = { accessToken: null, serviceAccount: null, apiKey: null };
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('bst_google_access_token');
+      }
+      connectionMode = 'GOOGLE_NOT_CONNECTED';
     },
 
     async readiness() {
@@ -320,7 +463,7 @@ export function createGoogleAdapter(options = {}) {
           mode: 'GOOGLE_CONNECTED',
           spreadsheetId: this.spreadsheetId,
           driveRootId: this.driveRootId,
-          reason: 'Google credentials active and ready for canonical operations.'
+          reason: 'Google credentials active. LIVE SYNC connected to Canonical Sheet & Drive.'
         };
       }
       return {
@@ -328,7 +471,7 @@ export function createGoogleAdapter(options = {}) {
         mode: 'GOOGLE_NOT_CONNECTED',
         spreadsheetId: this.spreadsheetId,
         driveRootId: this.driveRootId,
-        reason: 'Google OAuth and server-side credentials are not configured. System is operating in Local Demo Fallback mode.'
+        reason: 'Google authentication required for live synchronization. Operating in Local Demo Fallback mode.'
       };
     },
 
@@ -362,7 +505,8 @@ export function createGoogleAdapter(options = {}) {
         throw new Error(`Google Sheets API read failed with status ${res.status}`);
       }
       const data = await res.json();
-      return data.values || [];
+      const rawRows = data.values || [];
+      return rawRows.map(row => deserializeRecord(moduleName, row)).filter(Boolean);
     },
 
     async writeRecord(moduleName, record) {
@@ -372,6 +516,7 @@ export function createGoogleAdapter(options = {}) {
       const mapping = SHEET_MODULES[moduleName];
       if (!mapping) throw new Error(`Unknown module: ${moduleName}`);
 
+      const row = serializeRecord(moduleName, record);
       const res = await fetch(`${this.getSheetsApiUrl(mapping.range)}:append?valueInputOption=USER_ENTERED`, {
         method: 'POST',
         headers: {
@@ -379,11 +524,65 @@ export function createGoogleAdapter(options = {}) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          values: [Array.isArray(record) ? record : Object.values(record)]
+          values: [row]
         })
       });
       if (!res.ok) {
         throw new Error(`Google Sheets API write failed with status ${res.status}`);
+      }
+      return await res.json();
+    },
+
+    async deleteRecord(moduleName, rowNumber) {
+      if (connectionMode !== 'GOOGLE_CONNECTED') {
+        throw new Error('GOOGLE_NOT_CONNECTED');
+      }
+      const mapping = SHEET_MODULES[moduleName];
+      if (!mapping) throw new Error(`Unknown module: ${moduleName}`);
+
+      const rowRange = `${mapping.sheetName}!A${rowNumber}:I${rowNumber}`;
+      const res = await fetch(`${this.getSheetsApiUrl(rowRange)}:clear`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${credentials.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`Google Sheets API clear failed with status ${res.status}`);
+      }
+      return await res.json();
+    },
+
+    async checkDriveAccess() {
+      if (connectionMode !== 'GOOGLE_CONNECTED') {
+        throw new Error('GOOGLE_NOT_CONNECTED');
+      }
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${this.driveRootId}?fields=id,name,mimeType`, {
+        headers: {
+          'Authorization': `Bearer ${credentials.accessToken}`,
+          'Accept': 'application/json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`Google Drive access check failed with status ${res.status}`);
+      }
+      return await res.json();
+    },
+
+    async listDriveEvidence() {
+      if (connectionMode !== 'GOOGLE_CONNECTED') {
+        throw new Error('GOOGLE_NOT_CONNECTED');
+      }
+      const q = `'${this.driveRootId}' in parents and trashed = false`;
+      const res = await fetch(this.getDriveFilesUrl(q), {
+        headers: {
+          'Authorization': `Bearer ${credentials.accessToken}`,
+          'Accept': 'application/json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`Google Drive list failed with status ${res.status}`);
       }
       return await res.json();
     },
@@ -437,6 +636,8 @@ if (typeof window !== 'undefined') {
     SHEET_MODULES,
     DRIVE_FOLDERS,
     CANONICAL_STATES,
+    serializeRecord,
+    deserializeRecord,
     calculateTaskCompleteness,
     convertIdeaToProposedTask,
     createMeetingCandidate,
@@ -448,3 +649,4 @@ if (typeof window !== 'undefined') {
     googleAdapter
   };
 }
+

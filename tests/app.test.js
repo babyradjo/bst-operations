@@ -6,6 +6,8 @@ import {
   SHEET_MODULES,
   DRIVE_FOLDERS,
   CANONICAL_STATES,
+  serializeRecord,
+  deserializeRecord,
   calculateTaskCompleteness,
   convertIdeaToProposedTask,
   createMeetingCandidate,
@@ -16,7 +18,6 @@ import {
   createGoogleAdapter
 } from '../google-adapter.js';
 
-
 test('workflow completion requires all contribution states to be complete', () => {
   const states = ['Sudah Diisi', 'Terverifikasi'];
   assert.equal(['Sudah Diisi', 'Belum Mulai'].every(x => states.includes(x)), false);
@@ -24,7 +25,6 @@ test('workflow completion requires all contribution states to be complete', () =
 });
 
 test('multi-user operations & Google adapter integration suite', async (t) => {
-
 
   await t.test('1. shared canonical task read/write configuration & structures', () => {
     assert.equal(SPREADSHEET_ID, '11CTN2RdpNsyngd9kwaI1DNwl82Q6G98363PdJQnrGkA');
@@ -185,5 +185,87 @@ test('multi-user operations & Google adapter integration suite', async (t) => {
     assert.ok(apiUrl.includes(SPREADSHEET_ID));
     assert.ok(apiUrl.includes('TASKS'));
   });
+
+  await t.test('9. Google Sheets row schema serialization & deserialization', () => {
+    const sampleTask = {
+      id: 501,
+      title: 'Koordinasi Lapangan Tahap 1',
+      program: 'Griffith Pilot',
+      owner: 'Beby Irawati',
+      due: 'Besok',
+      status: 'Sedang Dikerjakan',
+      contributors: [['Komunitas', 'Sudah Diisi']],
+      demo: false,
+      provenance: { created_by: 'Beby Irawati' }
+    };
+
+    const row = serializeRecord('tasks', sampleTask);
+    assert.equal(row[0], 501);
+    assert.equal(row[1], 'Koordinasi Lapangan Tahap 1');
+    assert.equal(row[7], 'FALSE');
+
+    const reconstructed = deserializeRecord('tasks', row);
+    assert.equal(reconstructed.id, 501);
+    assert.equal(reconstructed.title, 'Koordinasi Lapangan Tahap 1');
+    assert.equal(reconstructed.owner, 'Beby Irawati');
+    assert.equal(reconstructed.demo, false);
+    assert.deepEqual(reconstructed.contributors, [['Komunitas', 'Sudah Diisi']]);
+  });
+
+  await t.test('10. multi-device shared state simulation (Beby write -> Oeblet read)', () => {
+    // Shared backend store simulation
+    const sharedSheetStore = {
+      tasks: [],
+      escalations: []
+    };
+
+    // Beby creates a new operational task on Device 1
+    const bebyTask = {
+      id: 901,
+      title: 'Verifikasi Laporan Bukti Griffith AUD 4K',
+      program: 'Griffith × BST Pilot',
+      owner: 'Beby Irawati',
+      due: '2026-09-05',
+      status: 'Sedang Dikerjakan',
+      contributors: [['Komunitas', 'Sudah Diisi'], ['Sekretariat', 'Belum Mulai']],
+      demo: false,
+      provenance: { created_by: 'Beby Irawati' }
+    };
+    const serializedRow = serializeRecord('tasks', bebyTask);
+    sharedSheetStore.tasks.push(serializedRow);
+
+    // Beby creates an escalation for Founder Oeblet on Device 1
+    const escalation = escalateToFounder(
+      'Batas Otoritas Grant Griffith AUD 4.000',
+      'Persetujuan draft akhir MoU bersama Griffith University',
+      'Beby Irawati',
+      'TINGGI'
+    );
+    escalation.demo = false;
+    sharedSheetStore.escalations.push(serializeRecord('escalations', escalation));
+
+    // Oeblet opens Device 2 (Session 2) and fetches shared data from Google Sheet
+    const oebletFetchedTasks = sharedSheetStore.tasks.map(r => deserializeRecord('tasks', r));
+    const oebletFetchedEscalations = sharedSheetStore.escalations.map(r => deserializeRecord('escalations', r));
+
+    assert.equal(oebletFetchedTasks.length, 1);
+    assert.equal(oebletFetchedTasks[0].id, 901);
+    assert.equal(oebletFetchedTasks[0].title, 'Verifikasi Laporan Bukti Griffith AUD 4K');
+    assert.equal(oebletFetchedTasks[0].demo, false);
+
+    assert.equal(oebletFetchedEscalations.length, 1);
+    assert.equal(oebletFetchedEscalations[0].title, 'Batas Otoritas Grant Griffith AUD 4.000');
+
+    // Oeblet resolves escalation on Device 2
+    const oebletDecision = resolveFounderEscalation(oebletFetchedEscalations[0], 'SETUJUI', 'Disetujui untuk penandatanganan.', 'Yusup Oeblet');
+    sharedSheetStore.escalations[0] = serializeRecord('escalations', oebletDecision);
+
+    // Beby on Device 1 re-syncs and sees Oeblet's verified approval
+    const bebySyncedEscalation = deserializeRecord('escalations', sharedSheetStore.escalations[0]);
+    assert.equal(bebySyncedEscalation.status, CANONICAL_STATES.VERIFIED);
+    assert.equal(bebySyncedEscalation.founder_action, 'SETUJUI');
+    assert.equal(bebySyncedEscalation.resolved_by, 'Yusup Oeblet');
+  });
 });
+
 
